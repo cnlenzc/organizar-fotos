@@ -1,6 +1,8 @@
 # organizar-fotos
 
-Transfere as fotos do celular (Samsung S20 FE) para o HD externo, **da mais antiga para a mais nova**, movendo cada foto (o Windows só apaga do celular depois de copiar).
+Transfere as fotos e vídeos do celular (Samsung S20 FE) para o HD externo, **da mais antiga para a mais nova**, movendo cada arquivo (o Windows só apaga do celular depois de copiar).
+
+São lidas todas as pastas dentro de `DCIM` (Camera, Screenshots, Screen recordings, Restored, ...), incluindo subpastas. Pastas ocultas (que começam com `.`) são ignoradas.
 
 ## Requisitos
 
@@ -37,7 +39,9 @@ D:\Videos\S20 FE de Carlos\
 
 São tratados como vídeo os arquivos `.mp4`, `.mov`, `.3gp`, `.mkv`, `.avi`, `.m4v` e `.webm` (lista `VIDEOS` no código). Todo o resto vai para Fotos.
 
-A data sai do nome do arquivo (`20240714_083309.jpg`). Se o nome não tiver data, usa a data de modificação do arquivo.
+A data sai do nome do arquivo: `20240714_083309.jpg`, `Screenshot_20240714_083309_App.jpg`, `IMG-20240714-WA0001.jpg`, `2024-07-14.jpg`. Se o nome não tiver data, usa a data de modificação do arquivo.
+
+Arquivos de pastas diferentes do celular vão para a mesma pasta `ano\mês`. Se dois tiverem o mesmo nome e conteúdo diferente, o segundo é salvo como `nome (1).jpg`.
 
 ## É seguro?
 
@@ -67,9 +71,13 @@ Se sobrou alguma foto em `.copiando` da execução anterior, o script resolve so
 
 Tudo fica registrado em `D:\transferencia\transferencia-AAAAMMDD.log`, com um arquivo por dia (ex.: `transferencia-20261124.log`). Se rodar mais de uma vez no mesmo dia, as linhas são acrescentadas ao mesmo arquivo.
 
-No início vem um resumo do que vai ser transferido (respeitando o `--limite`): o total, separado em fotos e vídeos, e quanto cada mês ocupa, com o total acumulado:
+No início vem quantos arquivos há em cada pasta do celular e um resumo do que vai ser transferido (respeitando o `--limite`): o total, separado em fotos e vídeos, e quanto cada mês ocupa, com o total acumulado:
 
 ```
+3254 arquivos no celular
+  DCIM\Camera: 2907 arquivos (31,93 GB)
+  DCIM\Screenshots: 322 arquivos (166,2 MB)
+  ...
 Total a transferir: 2907 arquivos (31,93 GB)
   Fotos:  2742 fotos (6,09 GB)
   Vídeos: 165 vídeos (25,83 GB)
@@ -92,12 +100,12 @@ No começo do [index.js](index.js):
 | Constante       | Padrão              | O que é                                  |
 | --------------- | ------------------- | ---------------------------------------- |
 | `CELULAR`       | `S20 FE de Carlos`  | Nome do celular em "Este Computador"      |
-| `PASTA_CELULAR` | `DCIM\Camera`       | Pasta do celular a transferir            |
+| `PASTA_CELULAR` | `DCIM`              | Pasta do celular a transferir (com todas as subpastas) |
 | `DESTINO_FOTOS` | `D:\Fotos\<CELULAR>` | Pasta das fotos no HD                  |
 | `DESTINO_VIDEOS`| `D:\Videos\<CELULAR>`| Pasta dos vídeos no HD                 |
 | `VIDEOS`        | `.mp4`, `.mov`, ...  | Extensões tratadas como vídeo          |
 
-Para transferir outra pasta (ex.: `DCIM\Screenshots`), troque `PASTA_CELULAR` e rode de novo.
+Para transferir só uma pasta (ex.: `DCIM\Screenshots`) ou outra pasta (ex.: `Pictures`), troque `PASTA_CELULAR` e rode de novo.
 
 ## Problemas comuns
 

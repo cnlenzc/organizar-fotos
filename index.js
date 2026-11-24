@@ -9,7 +9,7 @@ const path = require("path")
 const readline = require("readline")
 
 const CELULAR = "S20 FE de Carlos"
-const PASTA_CELULAR = "DCIM\\Camera"
+const PASTA_CELULAR = "DCIM" // inclui todas as subpastas (Camera, Screenshots, ...)
 const DESTINO_FOTOS = `D:\\Fotos\\${CELULAR}`
 const DESTINO_VIDEOS = `D:\\Videos\\${CELULAR}`
 const VIDEOS = [".mp4", ".mov", ".3gp", ".mkv", ".avi", ".m4v", ".webm"]
@@ -29,18 +29,26 @@ if (-not $dev) { [Console]::Out.WriteLine('{"erro":"Celular nao encontrado"}'); 
 $pasta = @($dev.GetFolder.Items())[0].GetFolder
 foreach ($p in '${PASTA_CELULAR}' -split '\\\\') { $pasta = ($pasta.Items() | Where-Object Name -eq $p).GetFolder }
 $itens = @{}
+# Lista os arquivos da pasta e de todas as subpastas (ignora pastas ocultas, que começam com ".")
+function Listar($pasta, $relativo) {
+  foreach ($it in @($pasta.Items())) {
+    if ($it.Name.StartsWith('.')) { continue }
+    $caminho = if ($relativo) { "$relativo\\$($it.Name)" } else { $it.Name }
+    if ($it.IsFolder) { Listar $it.GetFolder $caminho; continue }
+    $itens[$caminho] = $it
+    $data = $it.ExtendedProperty('System.DateModified')
+    @{ caminho = $caminho; nome = $it.Name; tamanho = [int64]$it.ExtendedProperty('System.Size')
+       data = if ($data) { ([datetime]$data).ToString('o') } else { $null } }
+  }
+}
 while ($null -ne ($linha = [Console]::In.ReadLine())) {
   try {
     $c = $linha | ConvertFrom-Json
     $r = @{ ok = $true }
     if ($c.op -eq 'listar') {
-      $r.arquivos = @($pasta.Items() | Where-Object { -not $_.IsFolder } | ForEach-Object {
-        $itens[$_.Name] = $_
-        @{ nome = $_.Name; tamanho = [int64]$_.ExtendedProperty('System.Size')
-           data = ([datetime]$_.ExtendedProperty('System.DateModified')).ToString('o') }
-      })
+      $r.arquivos = @(Listar $pasta '')
     } elseif ($c.op -eq 'mover') {
-      $shell.NameSpace($c.destino).MoveHere($itens[$c.nome], 4 + 16 + 1024)
+      $shell.NameSpace($c.destino).MoveHere($itens[$c.caminho], 4 + 16 + 1024)
     }
   } catch { $r = @{ ok = $false; erro = $_.Exception.Message } }
   [Console]::Out.WriteLine(($r | ConvertTo-Json -Compress -Depth 4))
@@ -67,7 +75,8 @@ function abrirCelular() {
 
 // Data da foto: pelo nome (20240714_083309.jpg) ou, se não tiver, pela data de modificação.
 function dataDaFoto(arquivo) {
-  const m = arquivo.nome.match(/(20\d\d)(\d\d)(\d\d)[_-]?(\d\d)?(\d\d)?(\d\d)?/)
+  // aceita 20240714_083309, 20240714-083309, 2024-07-14 e IMG-20240714-WA0001
+  const m = arquivo.nome.match(/(20\d\d)[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?:[_ -](\d\d)[-.]?(\d\d)[-.]?(\d\d))?/)
   if (m) return new Date(m[1], m[2] - 1, m[3], m[4] || 0, m[5] || 0, m[6] || 0)
   return new Date(arquivo.data)
 }
@@ -155,13 +164,21 @@ async function main() {
     })
     .sort((a, b) => a.quando - b.quando)
   log(`${fotos.length} arquivos no celular${SIMULAR ? " (simulação)" : ""}`)
+  for (const [pasta, daPasta] of Map.groupBy(fotos, (f) => path.dirname(f.caminho))) {
+    log(`  ${path.join(PASTA_CELULAR, pasta)}: ${contagem(daPasta, "arquivo", "arquivos")}`)
+  }
 
-  // Restos de uma execução interrompida: se a foto ainda está no celular, o que ficou
-  // aqui é uma cópia pela metade (descarta); se não está mais, ela já saiu do celular (guarda).
-  const noCelular = new Set(fotos.map((f) => f.nome))
+  // Restos de uma execução interrompida. Uma cópia pela metade é menor que o original, que
+  // ainda está no celular: descarta. Se não há no celular um arquivo com o mesmo nome e
+  // tamanho diferente, a cópia está completa (o original já saiu do celular): guarda.
   for (const nome of SIMULAR ? [] : fs.readdirSync(TEMP)) {
-    if (noCelular.has(nome)) { fs.rmSync(path.join(TEMP, nome), { force: true }); continue }
-    const quando = dataDaFoto({ nome, data: fs.statSync(path.join(TEMP, nome)).mtime })
+    const temp = path.join(TEMP, nome)
+    const mesmoNome = fotos.filter((f) => f.nome === nome)
+    if (mesmoNome.length && !mesmoNome.some((f) => f.tamanho === tamanho(temp))) {
+      fs.rmSync(temp, { force: true })
+      continue
+    }
+    const quando = dataDaFoto({ nome, data: fs.statSync(temp).mtime })
     log(`Recuperado da execução anterior: ${destinoDe(nome, quando).rotulo} ${guardar(nome, quando)}`)
   }
 
@@ -170,13 +187,13 @@ async function main() {
   resumo(lista)
 
   for (const [i, foto] of lista.entries()) {
-    const origem = path.join(CELULAR, PASTA_CELULAR, foto.nome)
+    const origem = path.join(CELULAR, PASTA_CELULAR, foto.caminho)
     const prefixo = `(${i + 1}/${lista.length}) ${origem} (${legivel(foto.tamanho)}) -> ${destinoDe(foto.nome, foto.quando).rotulo}`
     if (SIMULAR) { log(prefixo); continue }
 
     try {
       // O Windows só apaga do celular depois de terminar a cópia.
-      await celular.enviar({ op: "mover", nome: foto.nome, destino: TEMP })
+      await celular.enviar({ op: "mover", caminho: foto.caminho, destino: TEMP })
       const recebido = tamanho(path.join(TEMP, foto.nome))
       if (recebido < 0) throw new Error("não chegou no HD")
       const aviso = recebido !== foto.tamanho ? ` ATENÇÃO: tamanho ${recebido} em vez de ${foto.tamanho}, confira` : ""
