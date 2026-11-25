@@ -1,4 +1,4 @@
-// Transfere as fotos do celular para o HD externo, da mais antiga para a mais nova.
+// Transfere as fotos e vídeos do celular (DCIM e WhatsApp) para o HD externo, da mais antiga para a mais nova.
 // Cada arquivo é MOVIDO do celular para uma pasta temporária (o Windows só apaga do celular
 // depois de terminar a cópia) e de lá para D:\Fotos\<celular>\ano\mês ou D:\Videos\<celular>\ano\mês.
 // Pode interromper (Ctrl+C) a qualquer momento. Para continuar, basta rodar de novo.
@@ -9,9 +9,28 @@ const path = require("path")
 const readline = require("readline")
 
 const CELULAR = "S20 FE de Carlos"
-const PASTA_CELULAR = "DCIM" // inclui todas as subpastas (Camera, Screenshots, ...)
+// Pastas do celular a transferir, com todas as subpastas (pastas ocultas, com ".", são ignoradas).
+// Figurinhas, GIFs, documentos e status do WhatsApp ficam de fora.
+const WHATSAPP = "Android\\media\\com.whatsapp\\WhatsApp\\Media"
+const WHATSAPP_BUSINESS = "Android\\media\\com.whatsapp.w4b\\WhatsApp Business\\Media"
+const PASTAS_CELULAR = [
+  "DCIM",
+  `${WHATSAPP}\\WhatsApp Images`,
+  `${WHATSAPP}\\WhatsApp Video`,
+  `${WHATSAPP}\\WhatsApp Video Notes`,
+  `${WHATSAPP_BUSINESS}\\WhatsApp Business Images`,
+  `${WHATSAPP_BUSINESS}\\WhatsApp Business Video`,
+  `${WHATSAPP_BUSINESS}\\WhatsApp Business Video Notes`,
+  "Pictures", // inclui Pictures\Whatsapp, Instagram, Telegram, ...
+  "Movies\\WhatsApp",
+  "Download",
+  "Documents",
+  "Telegram\\Telegram Images",
+  "Movies\\Telegram",
+]
 const DESTINO_FOTOS = `D:\\Fotos\\${CELULAR}`
 const DESTINO_VIDEOS = `D:\\Videos\\${CELULAR}`
+const FOTOS = [".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".dng"]
 const VIDEOS = [".mp4", ".mov", ".3gp", ".mkv", ".avi", ".m4v", ".webm"]
 const SIMULAR = process.argv.includes("--simular")
 // --limite N: transfere só as N fotos mais antigas
@@ -26,15 +45,25 @@ $ErrorActionPreference = 'Stop'
 $shell = New-Object -ComObject Shell.Application
 $dev = $shell.NameSpace(17).Items() | Where-Object Name -eq '${CELULAR}' | Select-Object -First 1
 if (-not $dev) { [Console]::Out.WriteLine('{"erro":"Celular nao encontrado"}'); exit }
-$pasta = @($dev.GetFolder.Items())[0].GetFolder
-foreach ($p in '${PASTA_CELULAR}' -split '\\\\') { $pasta = ($pasta.Items() | Where-Object Name -eq $p).GetFolder }
+$raiz = @($dev.GetFolder.Items())[0].GetFolder
 $itens = @{}
-# Lista os arquivos da pasta e de todas as subpastas (ignora pastas ocultas, que começam com ".")
-function Listar($pasta, $relativo) {
+# Abre uma pasta pelo caminho a partir da raiz do armazenamento (ex.: DCIM\\Camera); $null se não existir
+function Abrir($caminho) {
+  $pasta = $raiz
+  foreach ($p in $caminho -split '\\\\') {
+    $item = $pasta.Items() | Where-Object Name -eq $p | Select-Object -First 1
+    if (-not $item) { return $null }
+    $pasta = $item.GetFolder
+  }
+  return $pasta
+}
+# Lista as fotos e vídeos da pasta e de todas as subpastas (ignora o que começa com ".")
+function Listar($pasta, $relativo, $extensoes) {
   foreach ($it in @($pasta.Items())) {
     if ($it.Name.StartsWith('.')) { continue }
-    $caminho = if ($relativo) { "$relativo\\$($it.Name)" } else { $it.Name }
-    if ($it.IsFolder) { Listar $it.GetFolder $caminho; continue }
+    $caminho = "$relativo\\$($it.Name)"
+    if ($it.IsFolder) { Listar $it.GetFolder $caminho $extensoes; continue }
+    if ($extensoes -notcontains [IO.Path]::GetExtension($it.Name).ToLower()) { continue }
     $itens[$caminho] = $it
     $data = $it.ExtendedProperty('System.DateModified')
     @{ caminho = $caminho; nome = $it.Name; tamanho = [int64]$it.ExtendedProperty('System.Size')
@@ -46,7 +75,7 @@ while ($null -ne ($linha = [Console]::In.ReadLine())) {
     $c = $linha | ConvertFrom-Json
     $r = @{ ok = $true }
     if ($c.op -eq 'listar') {
-      $r.arquivos = @(Listar $pasta '')
+      $r.arquivos = @(foreach ($p in $c.pastas) { $pasta = Abrir $p; if ($pasta) { Listar $pasta $p $c.extensoes } })
     } elseif ($c.op -eq 'mover') {
       $shell.NameSpace($c.destino).MoveHere($itens[$c.caminho], 4 + 16 + 1024)
     }
@@ -135,15 +164,32 @@ function resumo(lista) {
   }
 }
 
+// Compara dois arquivos byte a byte, em pedaços de 1 MB (vídeos grandes não lotam a memória).
+function iguais(a, b) {
+  if (tamanho(a) !== tamanho(b)) return false
+  const fa = fs.openSync(a, "r"), fb = fs.openSync(b, "r")
+  const ba = Buffer.alloc(1 << 20), bb = Buffer.alloc(1 << 20)
+  try {
+    for (let lidos; (lidos = fs.readSync(fa, ba)) > 0; ) {
+      fs.readSync(fb, bb, 0, lidos)
+      if (!ba.subarray(0, lidos).equals(bb.subarray(0, lidos))) return false
+    }
+    return true
+  } finally {
+    fs.closeSync(fa)
+    fs.closeSync(fb)
+  }
+}
+
 // Leva o arquivo da pasta temporária para a pasta final. Nunca sobrescreve:
-// se já existe um igual (mesmo tamanho) descarta o repetido; se é diferente, salva como "nome (1).jpg".
+// se já existe um idêntico (byte a byte) descarta o repetido; se é diferente, salva como "nome (1).jpg".
 function guardar(nome, quando) {
   const temp = path.join(TEMP, nome)
   const { pasta } = destinoDe(nome, quando)
   const ext = path.extname(nome)
   let final = path.join(pasta, nome)
   for (let n = 1; fs.existsSync(final); n++) {
-    if (tamanho(final) === tamanho(temp)) { fs.rmSync(temp); return "já estava no HD" }
+    if (iguais(final, temp)) { fs.rmSync(temp); return "já estava no HD" }
     final = path.join(pasta, `${path.basename(nome, ext)} (${n})${ext}`)
   }
   fs.mkdirSync(pasta, { recursive: true })
@@ -155,17 +201,18 @@ async function main() {
   fs.mkdirSync(TEMP, { recursive: true })
 
   const celular = abrirCelular()
-  log("Lendo a lista de fotos do celular...")
-  const { arquivos } = await celular.enviar({ op: "listar" })
+  log("Lendo a lista de fotos do celular (pode levar alguns minutos)...")
+  const { arquivos } = await celular.enviar({ op: "listar", pastas: PASTAS_CELULAR, extensoes: [...FOTOS, ...VIDEOS] })
   const fotos = arquivos
     .map((a) => {
       const quando = dataDaFoto(a)
       return { ...a, quando, mes: mesDe(quando), video: ehVideo(a.nome) }
     })
-    .sort((a, b) => a.quando - b.quando)
-  log(`${fotos.length} arquivos no celular${SIMULAR ? " (simulação)" : ""}`)
-  for (const [pasta, daPasta] of Map.groupBy(fotos, (f) => path.dirname(f.caminho))) {
-    log(`  ${path.join(PASTA_CELULAR, pasta)}: ${contagem(daPasta, "arquivo", "arquivos")}`)
+    .sort((a, b) => a.quando - b.quando || a.nome.localeCompare(b.nome))
+  log(`${contagem(fotos, "arquivo", "arquivos")} no celular${SIMULAR ? " (simulação)" : ""}`)
+  const porPasta = [...Map.groupBy(fotos, (f) => path.dirname(f.caminho))].sort(([a], [b]) => a.localeCompare(b))
+  for (const [pasta, daPasta] of porPasta) {
+    log(`  ${pasta}: ${contagem(daPasta, "arquivo", "arquivos")}`)
   }
 
   // Restos de uma execução interrompida. Uma cópia pela metade é menor que o original, que
@@ -187,7 +234,7 @@ async function main() {
   resumo(lista)
 
   for (const [i, foto] of lista.entries()) {
-    const origem = path.join(CELULAR, PASTA_CELULAR, foto.caminho)
+    const origem = path.join(CELULAR, foto.caminho)
     const prefixo = `(${i + 1}/${lista.length}) ${origem} (${legivel(foto.tamanho)}) -> ${destinoDe(foto.nome, foto.quando).rotulo}`
     if (SIMULAR) { log(prefixo); continue }
 

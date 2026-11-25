@@ -2,7 +2,19 @@
 
 Transfere as fotos e vídeos do celular (Samsung S20 FE) para o HD externo, **da mais antiga para a mais nova**, movendo cada arquivo (o Windows só apaga do celular depois de copiar).
 
-São lidas todas as pastas dentro de `DCIM` (Camera, Screenshots, Screen recordings, Restored, ...), incluindo subpastas. Pastas ocultas (que começam com `.`) são ignoradas.
+Pastas lidas no celular (lista `PASTAS_CELULAR` no código), sempre com todas as subpastas:
+
+- `DCIM` (Camera, Screenshots, Screen recordings, Restored, ...)
+- WhatsApp: `WhatsApp Images`, `WhatsApp Video` e `WhatsApp Video Notes`, incluindo as recebidas (`Private`) e as enviadas (`Sent`). Ficam em `Android\media\com.whatsapp\WhatsApp\Media`.
+- WhatsApp Business: as mesmas pastas, em `Android\media\com.whatsapp.w4b\WhatsApp Business\Media`
+- `Pictures` (com Whatsapp, Instagram, Telegram e outras subpastas; as miniaturas em `.thumbnails` ficam de fora)
+- `Movies\WhatsApp`
+- `Download` e `Documents` (só as fotos e vídeos; PDFs, APKs e outros arquivos ficam)
+- `Telegram\Telegram Images` e `Movies\Telegram`
+
+Só são movidas fotos e vídeos (listas `FOTOS` e `VIDEOS` no código). Figurinhas, GIFs, documentos e status do WhatsApp ficam no celular, assim como pastas e arquivos ocultos (que começam com `.`).
+
+> Depois de mover a mídia do WhatsApp, as fotos e vídeos antigos das conversas aparecem como indisponíveis no próprio WhatsApp. Eles continuam guardados no HD.
 
 ## Requisitos
 
@@ -37,11 +49,13 @@ D:\Videos\S20 FE de Carlos\
     01\20230102_103435.mp4
 ```
 
-São tratados como vídeo os arquivos `.mp4`, `.mov`, `.3gp`, `.mkv`, `.avi`, `.m4v` e `.webm` (lista `VIDEOS` no código). Todo o resto vai para Fotos.
+São tratados como vídeo os arquivos `.mp4`, `.mov`, `.3gp`, `.mkv`, `.avi`, `.m4v` e `.webm`. Como foto: `.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.webp`, `.gif` e `.dng`.
 
 A data sai do nome do arquivo: `20240714_083309.jpg`, `Screenshot_20240714_083309_App.jpg`, `IMG-20240714-WA0001.jpg`, `2024-07-14.jpg`. Se o nome não tiver data, usa a data de modificação do arquivo.
 
-Arquivos de pastas diferentes do celular vão para a mesma pasta `ano\mês`. Se dois tiverem o mesmo nome e conteúdo diferente, o segundo é salvo como `nome (1).jpg`.
+Arquivos de pastas diferentes do celular vão para a mesma pasta `ano\mês`. Nomes repetidos são comuns, porque a numeração do WhatsApp (`WA0017`) recomeça em cada app. Quando o nome já existe no destino, os dois arquivos são comparados byte a byte:
+- **idênticos:** o repetido é descartado;
+- **diferentes:** o novo é salvo como `nome (1).jpg`.
 
 ## É seguro?
 
@@ -54,7 +68,7 @@ Para cada foto, o script:
 Se a foto não chegar ao HD, ela **continua no celular** e o erro aparece no log.
 
 O script nunca sobrescreve nada no HD:
-- se já existe uma foto com o mesmo nome e tamanho, a repetida é descartada;
+- se já existe uma foto com o mesmo nome e conteúdo idêntico (comparado byte a byte), a repetida é descartada;
 - se existe um arquivo diferente com o mesmo nome, a nova é salva como `nome (1).jpg`.
 
 > Fotos removidas do celular **não vão para a lixeira** do celular.
@@ -100,18 +114,19 @@ No começo do [index.js](index.js):
 | Constante       | Padrão              | O que é                                  |
 | --------------- | ------------------- | ---------------------------------------- |
 | `CELULAR`       | `S20 FE de Carlos`  | Nome do celular em "Este Computador"      |
-| `PASTA_CELULAR` | `DCIM`              | Pasta do celular a transferir (com todas as subpastas) |
+| `PASTAS_CELULAR`| `DCIM`, WhatsApp, ... | Pastas do celular a transferir (com todas as subpastas) |
+| `FOTOS`         | `.jpg`, `.png`, ...  | Extensões tratadas como foto           |
 | `DESTINO_FOTOS` | `D:\Fotos\<CELULAR>` | Pasta das fotos no HD                  |
 | `DESTINO_VIDEOS`| `D:\Videos\<CELULAR>`| Pasta dos vídeos no HD                 |
 | `VIDEOS`        | `.mp4`, `.mov`, ...  | Extensões tratadas como vídeo          |
 
-Para transferir só uma pasta (ex.: `DCIM\Screenshots`) ou outra pasta (ex.: `Pictures`), troque `PASTA_CELULAR` e rode de novo.
+Para incluir ou tirar pastas (ex.: `Pictures`, `Download`), edite a lista `PASTAS_CELULAR`. Pastas que não existem no celular são ignoradas.
 
 ## Problemas comuns
 
 - **"Celular nao encontrado"**: confira se o nome aparece igual em "Este Computador" e se o celular está desbloqueado.
 - **Lista vazia ou erro ao ler**: no celular, mude o USB para "Transferência de arquivos" (às vezes fica em "Apenas carregar").
-- **"salva como nome (1).jpg"**: já havia outro arquivo com o mesmo nome e tamanho diferente. As duas versões ficam guardadas.
+- **"salva como nome (1).jpg"**: já havia outro arquivo com o mesmo nome e conteúdo diferente. As duas versões ficam guardadas.
 
 ## Como funciona por dentro
 
